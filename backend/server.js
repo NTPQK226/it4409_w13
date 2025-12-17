@@ -1,0 +1,193 @@
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Username: 20225219
+// Password: 20225219
+// Cluster: w10.iemjt38.mongodb.net
+// DB Name: it4409
+const MONGO_URI = "mongodb+srv://20225219:20225219@w10.iemjt38.mongodb.net/it4409?appName=w10";
+
+mongoose.connect(MONGO_URI)
+    .then(async () => { // Thêm async ở đây
+        console.log("Đã kết nối thành công MongoDB: it4409");
+        await User.syncIndexes();
+    })
+    .catch((err) => console.error("Lỗi kết nối MongoDB:", err.message));
+
+// --- SCHEMA ---
+const UserSchema = new mongoose.Schema({
+    name: {
+        type: String,
+        required: [true, 'Tên không được để trống'],
+        minlength: [2, 'Tên phải có ít nhất 2 ký tự'],
+        trim: true // Tự động cắt khoảng trắng đầu cuối
+    },
+    age: {
+        type: Number,
+        required: [true, 'Tuổi không được để trống'],
+        min: [0, 'Tuổi phải >= 0'],
+        validate: {
+            validator: Number.isInteger,
+            message: 'Tuổi phải là số nguyên'
+        }
+    },
+    email: {
+        type: String,
+        required: [true, 'Email không được để trống'],
+        match: [/^\S+@\S+\.\S+$/, 'Email không hợp lệ'],
+        unique: true, // Yêu cầu Email duy nhất
+        trim: true    // Tự động cắt khoảng trắng
+    },
+    address: {
+        type: String,
+        trim: true
+    }
+});
+
+const User = mongoose.model("User", UserSchema);
+
+// 1. GET - Lấy danh sách (Phân trang + Tìm kiếm)
+app.get("/api/users", async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 5;
+        const search = req.query.search || "";
+
+        const filter = search ? {
+            $or: [
+                { name: { $regex: search, $options: "i" } },
+                { email: { $regex: search, $options: "i" } },
+                { address: { $regex: search, $options: "i" } }
+            ]
+        } : {};
+
+        const skip = (page - 1) * limit;
+
+        const [users, total] = await Promise.all([
+            User.find(filter).skip(skip).limit(limit).sort({ _id: -1 }),
+            User.countDocuments(filter)
+        ]);
+
+        const totalPages = Math.ceil(total / limit);
+
+        res.json({ page, limit, total, totalPages, data: users });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Hàm xử lý lỗi chung (để bắt lỗi trùng Email)
+const handleErrors = (err, res) => {
+    if (err.code === 11000) {
+        return res.status(400).json({ error: "Email này đã tồn tại trong hệ thống!" });
+    }
+    return res.status(400).json({ error: err.message });
+};
+
+// 2. POST - Tạo user mới
+app.post("/api/users", async (req, res) => {
+    try {
+        // Schema đã có trim: true nên không cần trim thủ công ở đây nữa
+        const { name, age, email, address } = req.body;
+        const newUser = await User.create({ name, age, email, address });
+        res.status(201).json({ message: "Tạo người dùng thành công", data: newUser });
+    } catch (err) {
+        handleErrors(err, res);
+    }
+});
+
+// 3. PUT - Cập nhật user
+app.put("/api/users/:id", async (req, res) => {
+    try {
+        const { name, age, email, address } = req.body;
+        const updatedUser = await User.findByIdAndUpdate(
+            req.params.id,
+            { name, age, email, address },
+            { new: true, runValidators: true }
+        );
+        if (!updatedUser) return res.status(404).json({ error: "Không tìm thấy người dùng" });
+        res.json({ message: "Cập nhật thành công", data: updatedUser });
+    } catch (err) {
+        handleErrors(err, res);
+    }
+});
+
+// 4. DELETE - Xóa user
+app.delete("/api/users/:id", async (req, res) => {
+    try {
+        const deletedUser = await User.findByIdAndDelete(req.params.id);
+        if (!deletedUser) return res.status(404).json({ error: "Không tìm thấy người dùng" });
+        res.json({ message: "Xóa thành công" });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+// Tạo DB ngẫu nghiên
+app.get("/api/seed-data", async (req, res) => {
+    try {
+        // Xóa dữ liệu cũ
+        await User.deleteMany({});
+
+        const listData = [];
+
+        const ho = ["Nguyễn", "Trần", "Lê", "Phạm", "Hoàng", "Vũ"];
+        const ten = ["Hùng", "Dũng", "Sang", "Trọng", "Minh", "Tâm", "Thảo", "Linh"];
+        const diaChi = ["Hà Nội", "Hải Phòng", "Đà Nẵng", "Hưng Yên", "Thái Bình"];
+
+        for (let i = 1; i <= 11; i++) {
+            const randomHo = ho[Math.floor(Math.random() * ho.length)];
+            const randomTen = ten[Math.floor(Math.random() * ten.length)];
+            const randomAddr = diaChi[Math.floor(Math.random() * diaChi.length)];
+
+            listData.push({
+                name: `${randomHo} Văn ${randomTen}`,
+                age: Math.floor(Math.random() * (25 - 18 + 1)) + 18,
+                email: `random${i}_${Date.now()}@sis.hust.edu.vn`,
+                address: randomAddr
+            });
+        }
+
+        listData.push({
+            name: "Lỹ Vĩ Phong",
+            age: 22,
+            email: "phong.lv215447@sis.hust.edu.vn",
+            address: "không biết"
+        });
+        listData.push({
+            name: "Trần Thanh Phong",
+            age: 21,
+            email: "phong.tt225374@sis.hust.edu.vn",
+            address: "không biết"
+        });
+        listData.push({
+            name: "Trần Nam Phong",
+            age: 21,
+            email: "phong.tn225061@sis.hust.edu.vn",
+            address: "không biết"
+        });
+        listData.push({
+            name: "Nguyễn Tuấn Phong",
+            age: 21,
+            email: "phong.nt225219@sis.hust.edu.vn",
+            address: "Thái Bình"
+        });
+        // Insert vào DB
+        await User.insertMany(listData);
+        res.json({ msg: "Đã tạo dữ liệu mẫu" });
+
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Start Server
+const PORT = 3001;
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+});
